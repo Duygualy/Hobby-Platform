@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useLocalSearchParams } from 'expo-router';
-import { View, Text, StyleSheet, TouchableOpacity, ScrollView, SafeAreaView, Image, Dimensions} from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity, ScrollView, SafeAreaView, Image, Dimensions } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 
 export default function HobbyTracker({ hobbySlug }: { hobbySlug?: string }) {
@@ -11,66 +11,72 @@ export default function HobbyTracker({ hobbySlug }: { hobbySlug?: string }) {
   const [selectedYear, setSelectedYear] = useState(new Date().getFullYear());
   const screenWidth = Dimensions.get('window').width;
   const daySize = screenWidth / 7 - 8;
-  const months = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+  const months = ['January','February','March','April','May','June','July','August','September','October','November','December'];
 
   const [completedDaysMap, setCompletedDaysMap] = useState<Record<string, Set<string>>>({});
+  const [goldenDaysMap, setGoldenDaysMap] = useState<Record<string, Set<string>>>({}); // ✅ altın günler
   const [treeLevel, setTreeLevel] = useState<number>(1);
 
-  const levelThresholds: Record<number, number> = {
-    1: 5,
-    2: 15,
-    3: 30,
-    4: 45,
-    5: 60,
+  const levelThresholds: Record<number, number> = { 1:5, 2:15, 3:30, 4:45, 5:60 };
+
+  // (opsiyonel) Altın gün işaretleme helper'ı — post atıldıysa çağırırsın
+  const markGolden = async (dateKey: string, value: boolean) => {
+    try {
+      await fetch(`https://de6f82654550.ngrok-free.app/api/progress/${hobby}/golden`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ date: dateKey, value })
+      });
+      // local state’i güncelle
+      setGoldenDaysMap(prev => {
+        const cur = prev[hobby] || new Set<string>();
+        const next = new Set(cur);
+        if (value) next.add(dateKey); else next.delete(dateKey);
+        return { ...prev, [hobby]: next };
+      });
+    } catch (e) {
+      console.warn('golden update failed', e);
+    }
   };
 
   useEffect(() => {
     const loadProgress = async () => {
-      const res = await fetch(`https://80c5d230b09e.ngrok-free.app/api/progress/${hobby}`);
+      const res = await fetch(`https://de6f82654550.ngrok-free.app/api/progress/${hobby}`);
       const data = await res.json();
-      const daySet: Set<string> = new Set(data.map((item: any) => item.date));
-      setCompletedDaysMap(prev => ({
-        ...prev,
-        [hobby]: daySet
-      }));
+      // ✅ hem tamamlanan günler hem de altın günler
+      const daySet = new Set<string>(data.map((x: any) => x.date));
+      const goldenSet = new Set<string>(data.filter((x: any) => x.isGolden).map((x: any) => x.date));
+      setCompletedDaysMap(prev => ({ ...prev, [hobby]: daySet }));
+      setGoldenDaysMap(prev => ({ ...prev, [hobby]: goldenSet }));
     };
 
     const loadLevel = async () => {
-  try {
-    const res = await fetch(`https://80c5d230b09e.ngrok-free.app/api/progress/${hobby}/level`);
-    const data = await res.json();
-
-      console.log("API cevabı:", data);
-
-    const level = data.level ?? data.data?.level ?? 1;
-    console.log("Tree level geldi:", level);
-
-    setTreeLevel(level); // DÜZENLENMİŞ HALİ
-  } catch (err) {
-    console.error("Tree level yüklenemedi:", err);
-    setTreeLevel(1);
-  }
-};
+      try {
+        const res = await fetch(`https://de6f82654550.ngrok-free.app/api/progress/${hobby}/level`);
+        const data = await res.json();
+        const level = data.level ?? data.data?.level ?? 1;
+        setTreeLevel(level);
+      } catch (err) {
+        console.error("Tree level yüklenemedi:", err);
+        setTreeLevel(1);
+      }
+    };
 
     loadProgress();
     loadLevel();
   }, [hobby]);
 
-  const getDaysInMonth = (month: number, year: number) =>
-    new Date(year, month + 1, 0).getDate();
-
-  const getFirstDayOfMonth = (month: number, year: number) =>
-    (new Date(year, month, 1).getDay() + 6) % 7;
+  const getDaysInMonth = (month: number, year: number) => new Date(year, month + 1, 0).getDate();
+  const getFirstDayOfMonth = (month: number, year: number) => (new Date(year, month, 1).getDay() + 6) % 7;
 
   const toggleDay = async (day: number) => {
     const dayKey = `${selectedYear}-${selectedMonth}-${day}`;
     const currentSet = completedDaysMap[hobby] || new Set();
     const newSet = new Set(currentSet);
     const isMarked = newSet.has(dayKey);
-
     const method = isMarked ? 'DELETE' : 'POST';
 
-    await fetch(`https://80c5d230b09e.ngrok-free.app/api/progress/${hobby}`, {
+    await fetch(`https://de6f82654550.ngrok-free.app/api/progress/${hobby}`, {
       method,
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ date: dayKey })
@@ -78,12 +84,19 @@ export default function HobbyTracker({ hobbySlug }: { hobbySlug?: string }) {
 
     isMarked ? newSet.delete(dayKey) : newSet.add(dayKey);
 
-    setCompletedDaysMap(prev => ({
-      ...prev,
-      [hobby]: newSet
-    }));
+    setCompletedDaysMap(prev => ({ ...prev, [hobby]: newSet }));
 
-    const res = await fetch(`https://80c5d230b09e.ngrok-free.app/api/progress/${hobby}/level`);
+    // Gün silindiyse altın bayrağı da düşür (UI tutarlılığı)
+    if (isMarked) {
+      setGoldenDaysMap(prev => {
+        const cur = prev[hobby] || new Set<string>();
+        const next = new Set(cur);
+        next.delete(dayKey);
+        return { ...prev, [hobby]: next };
+      });
+    }
+
+    const res = await fetch(`https://de6f82654550.ngrok-free.app/api/progress/${hobby}/level`);
     const data = await res.json();
     setTreeLevel(data.level);
   };
@@ -148,7 +161,6 @@ export default function HobbyTracker({ hobbySlug }: { hobbySlug?: string }) {
   const remaining = levelThresholds[treeLevel]
     ? levelThresholds[treeLevel] - (completedDaysMap[hobby]?.size || 0)
     : 0;
-  
 
   const navigateMonth = (direction: 'prev' | 'next') => {
     if (direction === 'prev') {
@@ -160,6 +172,7 @@ export default function HobbyTracker({ hobbySlug }: { hobbySlug?: string }) {
 
   const renderCalendarDays = () => {
     const currentHobbyDays = completedDaysMap[hobby] || new Set();
+    const goldenDaysSet = goldenDaysMap[hobby] || new Set(); // ✅ altın gün set’i
     const daysInMonth = getDaysInMonth(selectedMonth, selectedYear);
     const firstDay = getFirstDayOfMonth(selectedMonth, selectedYear);
     const days = [];
@@ -171,6 +184,7 @@ export default function HobbyTracker({ hobbySlug }: { hobbySlug?: string }) {
     for (let day = 1; day <= daysInMonth; day++) {
       const dayKey = `${selectedYear}-${selectedMonth}-${day}`;
       const isCompleted = currentHobbyDays.has(dayKey);
+      const isGolden = goldenDaysSet.has(dayKey); // ✅ bugünün altın mı?
       const isToday =
         day === new Date().getDate() &&
         selectedMonth === new Date().getMonth() &&
@@ -189,7 +203,9 @@ export default function HobbyTracker({ hobbySlug }: { hobbySlug?: string }) {
         >
           <Text style={[styles.dayText, isCompleted && styles.completedDayText]}>{day}</Text>
           {isCompleted && (
-            <Ionicons name="checkmark" size={16} color="#fff" style={styles.checkIcon} />
+            isGolden
+              ? <Ionicons name="star" size={16} color="#FFD700" style={styles.checkIcon} /> // ⭐ altın gün
+              : <Ionicons name="checkmark" size={16} color="#fff" style={styles.checkIcon} />
           )}
         </TouchableOpacity>
       );
@@ -197,10 +213,6 @@ export default function HobbyTracker({ hobbySlug }: { hobbySlug?: string }) {
 
     return days;
   };
-
-  console.log("treeLevel:", treeLevel);
-  console.log("completedDays:", completedDaysMap[hobby]?.size);
-  console.log("remaining:", remaining);
 
   return (
     <SafeAreaView style={styles.container}>
@@ -225,59 +237,42 @@ export default function HobbyTracker({ hobbySlug }: { hobbySlug?: string }) {
             </View>
           </View>
           <View style={styles.treeLevelProgress}>
-              <Text style={styles.progressLabel}>Tree Growth Progress</Text>
-              <View style={styles.levelProgressBar}>
-                <View 
-                  style={[
-                    styles.levelProgressFill,
-                    { width: `${(treeLevel / 5) * 100}%` }
-                  ]}
-                />
-              </View>
-              <View style={styles.levelDots}>
-                {[1, 2, 3, 4, 5].map((level) => (
-                  <View
-                    key={level}
-                    style={[
-                      styles.levelDot,
-                      treeLevel >= level && styles.activeLevelDot
-                    ]}
-                  />
-                ))}
-              </View>
+            <Text style={styles.progressLabel}>Tree Growth Progress</Text>
+            <View style={styles.levelProgressBar}>
+              <View style={[styles.levelProgressFill, { width: `${(treeLevel / 5) * 100}%` }]} />
+            </View>
+            <View style={styles.levelDots}>
+              {[1, 2, 3, 4, 5].map((level) => (
+                <View key={level} style={[styles.levelDot, treeLevel >= level && styles.activeLevelDot]} />
+              ))}
             </View>
           </View>
-  
-          <View style={styles.progressSection}>
-            <View style={styles.statsRow}>
-              <View style={styles.statBox}>
-                <Text style={styles.statNumber}>{Math.round(getMonthlyProgress())}%</Text>
-                <Text style={styles.statLabel}>This month</Text>
-              </View>
-              <View style={styles.statBox}>
-                <Text style={styles.statNumber}> {completedDaysMap[hobby]?.size || 0}</Text>
-                <Text style={styles.statLabel}>Total</Text>
-              </View>
-            </View>
-  
-            <View style={styles.progressContainer}>
-              <Text style={styles.progressLabel}>Monthly Progress Bar</Text>
-              <View style={styles.progressBar}>
-                <View 
-                  style={[
-                    styles.progressFill,
-                    { width: `${getMonthlyProgress()}%` }
-                  ]}
-                />
-              </View>
-              <Text style={styles.progressText}>
-                {Array.from(completedDaysMap[hobby] || []).filter(
-  day => day.startsWith(`${selectedYear}-${selectedMonth}-`)
-).length}
-                 / {getDaysInMonth(selectedMonth, selectedYear)} day completed
-              </Text>
-            </View>
+        </View>
 
+        <View style={styles.progressSection}>
+          <View style={styles.statsRow}>
+            <View style={styles.statBox}>
+              <Text style={styles.statNumber}>{Math.round(getMonthlyProgress())}%</Text>
+              <Text style={styles.statLabel}>This month</Text>
+            </View>
+            <View style={styles.statBox}>
+              <Text style={styles.statNumber}> {completedDaysMap[hobby]?.size || 0}</Text>
+              <Text style={styles.statLabel}>Total</Text>
+            </View>
+          </View>
+
+          <View style={styles.progressContainer}>
+            <Text style={styles.progressLabel}>Monthly Progress Bar</Text>
+            <View style={styles.progressBar}>
+              <View style={[styles.progressFill, { width: `${getMonthlyProgress()}%` }]} />
+            </View>
+            <Text style={styles.progressText}>
+              {Array.from(completedDaysMap[hobby] || []).filter(
+                day => day.startsWith(`${selectedYear}-${selectedMonth}-`)
+              ).length}
+              / {getDaysInMonth(selectedMonth, selectedYear)} day completed
+            </Text>
+          </View>
         </View>
 
         <View style={styles.calendarSection}>
@@ -294,7 +289,7 @@ export default function HobbyTracker({ hobbySlug }: { hobbySlug?: string }) {
           </View>
 
           <View style={styles.weekDaysRow}>
-            {['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'].map((day) => (
+            {['Mon','Tue','Wed','Thu','Fri','Sat','Sun'].map((day) => (
               <Text key={day} style={styles.weekDayText}>{day}</Text>
             ))}
           </View>
@@ -305,14 +300,16 @@ export default function HobbyTracker({ hobbySlug }: { hobbySlug?: string }) {
         </View>
 
         <View style={styles.motivationSection}>
-          <Text style={styles.motivationText}>
-            {getRandomQuote()}
-          </Text>
+          <Text style={styles.motivationText}>{getRandomQuote()}</Text>
         </View>
       </ScrollView>
     </SafeAreaView>
   );
 }
+
+/* Not: styles objende `checkIcon` zaten varmış; yoksa ekle:
+checkIcon: { position: 'absolute', right: 4, bottom: 4 }
+*/
 
 const styles = StyleSheet.create({
   container: {
